@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Presentation Timer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;600&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── Tokens ────────────────────────────────────────── */
+    :root {
+      --bg:           #0057D9;
+      --text:         #ffffff;
+      --warn:         #C0392B;
+      --complete:     #0d0d0d;
+      --speed-bg:     700ms;
+      --speed-fade:   500ms;
+      --arc-c:        565.49; /* 2π × 90 */
+    }
+
+    /* ── Base ──────────────────────────────────────────── */
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      transition: background var(--speed-bg) ease;
+    }
+
+    /* ── Noise grain overlay ───────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      background-size: 200px 200px;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* Grid lines */
+    body::after {
+      content: '';
+      position: fixed; inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
+      background-size: 72px 72px;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* ── Layout ────────────────────────────────────────── */
+    #app {
+      position: relative;
+      z-index: 2;
+      width: 100vw; height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      grid-template-columns: 1fr;
+      padding: clamp(24px, 4vh, 52px) clamp(28px, 5vw, 80px);
+    }
+
+    /* ── Flash overlay ─────────────────────────────────── */
+    #flash {
+      position: fixed; inset: 0; z-index: 999;
+      background: rgba(255,255,255,0);
+      pointer-events: none;
+      transition: background 120ms ease;
+    }
+    #flash.active { background: rgba(255,255,255,0.16); }
+
+    /* ══════════════════════════════════════════════════════
+       STATUS BAR
+    ══════════════════════════════════════════════════════ */
+    #status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: clamp(20px, 3vh, 40px);
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      margin-bottom: clamp(20px, 3vh, 40px);
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .stat-label {
+      font-family: 'DM Mono', monospace;
+      font-size: clamp(8px, 0.9vw, 11px);
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      opacity: 0.4;
+    }
+
+    .stat-value {
+      font-family: 'DM Mono', monospace;
+      font-size: clamp(13px, 1.4vw, 17px);
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      opacity: 0.85;
+    }
+
+    #section-badge {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 100px;
+      padding: 5px 18px;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       MAIN STAGE
+    ══════════════════════════════════════════════════════ */
+    #stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: clamp(10px, 1.8vh, 20px);
+      text-align: center;
+    }
+
+    /* Speaker pill */
+    #speaker {
+      font-family: 'DM Mono', monospace;
+      font-size: clamp(9px, 1vw, 12px);
+      letter-spacing: 0.32em;
+      text-transform: uppercase;
+      opacity: 0.5;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.15);
+      padding: 7px 22px;
+      border-radius: 3px;
+    }
+
+    /* Slide title */
+    #slide {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(40px, 5.5vw, 80px);
+      line-height: 1;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      max-width: min(860px, 90vw);
+    }
+
+    /* ── Timer ring ────────────────────────────────────── */
+    #timer-wrap {
+      position: relative;
+      width: clamp(240px, 28vw, 380px);
+      height: clamp(240px, 28vw, 380px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: clamp(8px, 1.5vh, 24px) 0;
+    }
+
+    #timer-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%; height: 100%;
+      overflow: visible;
+    }
+
+    #arc-track {
+      fill: none;
+      stroke: rgba(255,255,255,0.08);
+      stroke-width: 3;
+    }
+
+    #arc-progress {
+      fill: none;
+      stroke: rgba(255,255,255,0.5);
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-dasharray: 565.49;
+      stroke-dashoffset: 0;
+      transform-origin: center;
+      transform: rotate(-90deg);
+      transition: stroke-dashoffset 1s linear, stroke 400ms ease;
+    }
+
+    #timer-digits {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(80px, 12vw, 160px);
+      line-height: 1;
+      letter-spacing: 0.02em;
+      position: relative;
+      z-index: 1;
+      text-shadow: 0 0 80px rgba(255,255,255,0.18);
+    }
+
+    #timer-digits.pulse {
+      animation: pulse 1s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.5; }
+    }
+
+    /* ── Next up ───────────────────────────────────────── */
+    #next-wrap {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      background: rgba(0,0,0,0.18);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 6px;
+      padding: clamp(10px, 1.5vh, 16px) clamp(20px, 2.5vw, 36px);
+      max-width: min(600px, 90vw);
+    }
+
+    #next-wrap.hidden { visibility: hidden; }
+
+    .next-label {
+      font-family: 'DM Mono', monospace;
+      font-size: clamp(8px, 0.8vw, 10px);
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      opacity: 0.35;
+      white-space: nowrap;
+      padding-right: 20px;
+    }
+
+    .next-sep {
+      width: 1px;
+      height: 28px;
+      background: rgba(255,255,255,0.12);
+      flex-shrink: 0;
+      margin-right: 20px;
+    }
+
+    .next-body {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 3px;
+      flex: 1;
+    }
+
+    .next-speaker-name {
+      font-family: 'DM Mono', monospace;
+      font-size: clamp(9px, 0.9vw, 11px);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      opacity: 0.4;
+    }
+
+    .next-slide-name {
+      font-size: clamp(12px, 1.2vw, 15px);
+      font-weight: 600;
+      opacity: 0.75;
+    }
+
+    .next-dur {
+      font-family: 'DM Mono', monospace;
+      font-size: clamp(11px, 1vw, 13px);
+      opacity: 0.35;
+      white-space: nowrap;
+      padding-left: 20px;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       PROGRESS BAR (bottom)
+    ══════════════════════════════════════════════════════ */
+    #progress-footer {
+      padding-top: clamp(16px, 2.5vh, 32px);
+      border-top: 1px solid rgba(255,255,255,0.1);
+      margin-top: clamp(16px, 2.5vh, 32px);
+    }
+
+    #progress-track {
+      position: relative;
+      height: 4px;
+      background: rgba(0,0,0,0.3);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    #progress-fill {
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 0%;
+      background: rgba(255,255,255,0.55);
+      border-radius: 2px;
+      transition: width 1s linear;
+    }
+
+    #progress-segments {
+      position: absolute;
+      inset: 0;
+      display: flex;
+    }
+
+    .seg-mark {
+      height: 100%;
+      border-right: 1px solid rgba(0,0,0,0.4);
+      flex-shrink: 0;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       COMPLETE SCREEN
+    ══════════════════════════════════════════════════════ */
+    #complete {
+      display: none;
+      position: fixed; inset: 0; z-index: 50;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: clamp(12px, 2vh, 24px);
+      text-align: center;
+      padding: 40px;
+    }
+
+    #complete.visible { display: flex; }
+
+    #complete-eyebrow {
+      font-family: 'DM Mono', monospace;
+      font-size: clamp(9px, 1vw, 12px);
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      opacity: 0.4;
+    }
+
+    #complete-title {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(64px, 10vw, 140px);
+      line-height: 0.95;
+      letter-spacing: 0.05em;
+    }
+
+    #complete-time {
+      font-family: 'DM Mono', monospace;
+      font-size: clamp(13px, 1.4vw, 18px);
+      opacity: 0.4;
+      letter-spacing: 0.12em;
+    }
+
+    /* ── Fade-in animation ─────────────────────────────── */
+    .fade-up {
+      animation: fadeUp var(--speed-fade) ease both;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(14px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+<div id="flash"></div>
+
+<div id="app">
+  <!-- Status bar -->
+  <div id="status-bar">
+    <div class="stat">
+      <span class="stat-label">Section</span>
+      <span class="stat-value" id="section-badge">1 / 1</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Elapsed</span>
+      <span class="stat-value" id="elapsed">00:00</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Remaining</span>
+      <span class="stat-value" id="remaining">00:00</span>
+    </div>
+  </div>
+
+  <!-- Main stage -->
+  <div id="stage">
+    <div id="speaker">—</div>
+    <div id="slide">—</div>
+
+    <div id="timer-wrap">
+      <svg id="timer-svg" viewBox="0 0 200 200">
+        <circle id="arc-track"    cx="100" cy="100" r="90" />
+        <circle id="arc-progress" cx="100" cy="100" r="90" />
+      </svg>
+      <div id="timer-digits">0:00</div>
+    </div>
+
+    <div id="next-wrap">
+      <span class="next-label">Up Next</span>
+      <div class="next-sep"></div>
+      <div class="next-body">
+        <span class="next-speaker-name" id="next-speaker">—</span>
+        <span class="next-slide-name"   id="next-slide">—</span>
+      </div>
+      <span class="next-dur" id="next-dur">—</span>
+    </div>
+  </div>
+
+  <!-- Progress bar -->
+  <div id="progress-footer">
+    <div id="progress-track">
+      <div id="progress-segments"></div>
+      <div id="progress-fill"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Complete screen (shown over everything) -->
+<div id="complete">
+  <span id="complete-eyebrow">Thank you</span>
+  <div id="complete-title">Presentation<br>Complete</div>
+  <span id="complete-time"></span>
+</div>
+
+<script>
+  // ════════════════════════════════════════════════════════
+  // PRESENTATION DATA
+  // Edit slides, speakers and durations (seconds) here.
+  // ════════════════════════════════════════════════════════
+  const SECTIONS = [
+    { slide: 'Welcome & Opening Remarks', speaker: 'Leo',      duration: 120 },
+    { slide: 'Company Vision 2025',       speaker: 'Francois', duration: 180 },
+    { slide: 'Product Roadmap Overview',  speaker: 'Astro',    duration: 240 },
+    { slide: 'Q1 Performance Results',    speaker: 'Leo',      duration: 150 },
+    { slide: 'Customer Success Stories',  speaker: 'Francois', duration: 200 },
+    { slide: 'Engineering Deep Dive',     speaker: 'Astro',    duration: 300 },
+    { slide: 'Go-to-Market Strategy',     speaker: 'Leo',      duration: 180 },
+    { slide: 'Financial Outlook',         speaker: 'Francois', duration: 160 },
+    { slide: 'Team & Culture Update',     speaker: 'Astro',    duration: 140 },
+    { slide: 'Q&A and Closing',           speaker: 'Leo',      duration: 120 },
+  ];
+
+  // ════════════════════════════════════════════════════════
+  // SPEAKER COLOURS
+  // ════════════════════════════════════════════════════════
+  const COLORS = {
+    Leo:      '#0057D9',
+    Francois: '#008A4C',
+    Astro:    '#243B8F',
+  };
+
+  const WARN_COLOR = '#C0392B';
+  const WARN_SECS  = 15;
+  const ARC_C      = 2 * Math.PI * 90; // ≈ 565.49
+
+  // ════════════════════════════════════════════════════════
+  // STATE
+  // ════════════════════════════════════════════════════════
+  let idx          = 0;
+  let secsLeft     = 0;
+  let secDur       = 0;
+  let elapsedTotal = 0;
+  let totalDur     = SECTIONS.reduce((s, x) => s + x.duration, 0);
+  let ticker       = null;
+  let inWarn       = false;
+
+  // ════════════════════════════════════════════════════════
+  // DOM refs
+  // ════════════════════════════════════════════════════════
+  const $ = id => document.getElementById(id);
+
+  const dom = {
+    flash:      $('flash'),
+    badge:      $('section-badge'),
+    elapsed:    $('elapsed'),
+    remaining:  $('remaining'),
+    speaker:    $('speaker'),
+    slide:      $('slide'),
+    digits:     $('timer-digits'),
+    arc:        $('arc-progress'),
+    nextWrap:   $('next-wrap'),
+    nextSpeaker:$('next-speaker'),
+    nextSlide:  $('next-slide'),
+    nextDur:    $('next-dur'),
+    fill:       $('progress-fill'),
+    segments:   $('progress-segments'),
+    complete:   $('complete'),
+    compTime:   $('complete-time'),
+    stage:      $('stage'),
+  };
+
+  // ════════════════════════════════════════════════════════
+  // HELPERS
+  // ════════════════════════════════════════════════════════
+  const fmt = secs => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const fmtFull = secs => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // ════════════════════════════════════════════════════════
+  // BUILD SEGMENT MARKERS
+  // ════════════════════════════════════════════════════════
+  function buildSegments() {
+    dom.segments.innerHTML = '';
+    SECTIONS.forEach(sec => {
+      const el = document.createElement('div');
+      el.className = 'seg-mark';
+      el.style.width = `${(sec.duration / totalDur) * 100}%`;
+      dom.segments.appendChild(el);
+    });
+  }
+
+  // ════════════════════════════════════════════════════════
+  // FLASH TRANSITION
+  // ════════════════════════════════════════════════════════
+  function flash(cb) {
+    dom.flash.classList.add('active');
+    setTimeout(() => {
+      dom.flash.classList.remove('active');
+      cb?.();
+    }, 180);
+  }
+
+  // ════════════════════════════════════════════════════════
+  // RENDER SECTION
+  // ════════════════════════════════════════════════════════
+  function renderSection(i) {
+    const sec  = SECTIONS[i];
+    const next = SECTIONS[i + 1] ?? null;
+
+    inWarn = false;
+
+    // Background colour
+    document.body.style.background = COLORS[sec.speaker] ?? '#0057D9';
+
+    // Text
+    dom.badge.textContent   = `${i + 1} / ${SECTIONS.length}`;
+    dom.speaker.textContent = sec.speaker;
+    dom.slide.textContent   = sec.slide;
+
+    // Next up
+    if (next) {
+      dom.nextSpeaker.textContent = next.speaker;
+      dom.nextSlide.textContent   = next.slide;
+      dom.nextDur.textContent     = fmtFull(next.duration);
+      dom.nextWrap.classList.remove('hidden');
+    } else {
+      dom.nextWrap.classList.add('hidden');
+    }
+
+    // Reset arc + digits style
+    dom.arc.style.stroke          = 'rgba(255,255,255,0.5)';
+    dom.arc.style.strokeDashoffset = '0';
+    dom.digits.classList.remove('pulse');
+
+    // Fade-up the stage content
+    dom.stage.classList.remove('fade-up');
+    // Force reflow so animation re-triggers
+    dom.stage.offsetHeight; // eslint-disable-line no-unused-expressions
+    dom.stage.classList.add('fade-up');
+  }
+
+  // ════════════════════════════════════════════════════════
+  // UPDATE UI EVERY TICK
+  // ════════════════════════════════════════════════════════
+  function tick() {
+    // Countdown digits
+    dom.digits.textContent = fmt(secsLeft);
+
+    // Arc
+    const fraction = secsLeft / secDur;
+    dom.arc.style.strokeDashoffset = String(ARC_C * (1 - fraction));
+
+    // Overall progress bar
+    const done = elapsedTotal + (secDur - secsLeft);
+    dom.fill.style.width = `${(done / totalDur) * 100}%`;
+
+    // Status bar
+    dom.elapsed.textContent   = fmtFull(done);
+    dom.remaining.textContent = fmtFull(totalDur - done);
+
+    // Warning threshold
+    if (secsLeft <= WARN_SECS && !inWarn) {
+      inWarn = true;
+      document.body.style.background = WARN_COLOR;
+      dom.arc.style.stroke = 'rgba(255,255,255,0.85)';
+      dom.digits.classList.add('pulse');
+    }
+  }
+
+  // ════════════════════════════════════════════════════════
+  // START A SECTION
+  // ════════════════════════════════════════════════════════
+  function startSection(i) {
+    clearInterval(ticker);
+
+    secDur   = SECTIONS[i].duration;
+    secsLeft = secDur;
+
+    renderSection(i);
+    tick(); // immediate first paint
+
+    ticker = setInterval(() => {
+      secsLeft--;
+      tick();
+      if (secsLeft <= 0) {
+        clearInterval(ticker);
+        // Brief pause at 0:00 before advancing
+        setTimeout(advance, 700);
+      }
+    }, 1000);
+  }
+
+  // ════════════════════════════════════════════════════════
+  // ADVANCE
+  // ════════════════════════════════════════════════════════
+  function advance() {
+    elapsedTotal += secDur;
+    idx++;
+    if (idx >= SECTIONS.length) {
+      showComplete();
+      return;
+    }
+    flash(() => startSection(idx));
+  }
+
+  // ════════════════════════════════════════════════════════
+  // COMPLETE SCREEN
+  // ════════════════════════════════════════════════════════
+  function showComplete() {
+    dom.fill.style.width = '100%';
+    flash(() => {
+      document.body.style.background = '#0d0d0d';
+      document.getElementById('app').style.display = 'none';
+      dom.compTime.textContent = `Total runtime  ${fmtFull(totalDur)}`;
+      dom.complete.classList.add('visible');
+      dom.complete.classList.add('fade-up');
+    });
+  }
+
+  // ════════════════════════════════════════════════════════
+  // INIT
+  // ════════════════════════════════════════════════════════
+  function init() {
+    buildSegments();
+    startSection(0);
+  }
+
+  document.readyState === 'loading'
+    ? document.addEventListener('DOMContentLoaded', init)
+    : init();
+</script>
+</body>
+</html>
